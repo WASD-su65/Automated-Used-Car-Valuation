@@ -97,6 +97,16 @@ The dev server runs at http://localhost:5173.
 
 See `http://localhost:8000/docs` for exact field names and example responses.
 
+## Testing
+
+Unit tests cover the pricing, severity and voting logic (`backend/valuation.py`) and run in CI on every push.
+
+```bash
+cd backend
+pip install pytest
+pytest -v
+```
+
 ## Limitations
 
 - The classifier only knows the 11 car classes it was trained on.
