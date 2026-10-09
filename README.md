@@ -1,5 +1,9 @@
 # Automated Used Car Valuation using Multi-Feature Image Analysis and Machine Learning
 
+[![CI](https://github.com/WASD-su65/Automated-Used-Car-Valuation/actions/workflows/ci.yml/badge.svg)](https://github.com/WASD-su65/Automated-Used-Car-Valuation/actions/workflows/ci.yml)
+
+A full-stack web application (React, FastAPI, Docker) that wraps the project's deep learning models into a usable valuation tool.
+
 Senior project, Department of Computer Science, Faculty of Science, Silpakorn University.
 Registered: summer term, academic year 2568 (B.E.). Final defense: 18 October 2026.
 
