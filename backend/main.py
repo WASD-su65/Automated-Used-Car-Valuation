@@ -33,6 +33,19 @@ app.add_middleware(
 # ==============================
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
+REQUIRED_MODELS = [
+    "best_efficientnet_model.keras",
+    "damage_model.pt",
+    "yolov8n.pt",
+]
+
+missing = [name for name in REQUIRED_MODELS if not os.path.isfile(os.path.join(MODELS_DIR, name))]
+if missing:
+    raise FileNotFoundError(
+        f"ไม่พบไฟล์โมเดลใน {MODELS_DIR}: {', '.join(missing)} "
+        "(ดูวิธีวางไฟล์ใน README หัวข้อ Models)"
+    )
+
 efficientnet_model = load_model(os.path.join(MODELS_DIR, "best_efficientnet_model.keras"))
 damage_model = YOLO(os.path.join(MODELS_DIR, "damage_model.pt"))
 car_model = YOLO(os.path.join(MODELS_DIR, "yolov8n.pt"))
