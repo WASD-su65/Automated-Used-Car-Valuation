@@ -7,20 +7,17 @@ import os
 import uuid
 import base64
 from collections import Counter
-
 from keras.models import load_model
 from keras.preprocessing.image import load_img, img_to_array
 from keras.applications.efficientnet import preprocess_input
 from ultralytics import YOLO
-
-# ==============================
-# FastAPI app + CORS
-# ==============================
+from valuation import (
+    class_price, class_names, ZOOM_LEVEL_OPTIONS, price_deduction,
+    SEVERITY_THRESHOLD_PERCENT, get_base_price, get_area, get_severity,
+    calculate_price, summarize_votes,
+)
 app = FastAPI(title="Car Damage Assessment API")
 
-# React (localhost:3000 หรือ 5173 แล้วแต่ใช้ CRA/Vite) รันคนละ Origin กับ Backend (localhost:8000)
-# เบราว์เซอร์จะบล็อก Request ข้าม Origin โดยอัตโนมัติ (นโยบาย Same-Origin)
-# ต้องเปิดอนุญาตชัดเจนผ่าน CORS Middleware นี้ ไม่งั้น React เรียก API ไม่ได้เลย
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -28,9 +25,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==============================
-# โหลดโมเดลทั้งหมด "ตอน Server เริ่มทำงาน" ครั้งเดียว
-# ==============================
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
 REQUIRED_MODELS = [
@@ -50,30 +44,9 @@ efficientnet_model = load_model(os.path.join(MODELS_DIR, "best_efficientnet_mode
 damage_model = YOLO(os.path.join(MODELS_DIR, "damage_model.pt"))
 car_model = YOLO(os.path.join(MODELS_DIR, "yolov8n.pt"))
 
-class_price = [430000, 300000, 300000, 170000,
-               200000, 170000, 290000, 580000,
-               290000, 220000, 200000]
-
-class_names = ['BMW_X1_2016', 'Ford_Renger_2016', 'Ford_Renger_2019', 'Honda_City_2014',
-               'Honda_City_2016', 'Honda_Civic_2013', 'Hyundai_H1_2012', 'Hyundai_H1_2019',
-               'Toyota_Fortuner_2011', 'Toyota_Revo_2015', 'Toyota_Vigo_2014']
-
-ZOOM_LEVEL_OPTIONS = {"close": 0.10, "medium": 0.25, "wide": 0.50}
-
-price_deduction = {
-    "scratch": {"minor": 2000, "major": 4000},
-    "dent":    {"minor": 4000, "major": 5000},
-}
-
-SEVERITY_THRESHOLD_PERCENT = {"scratch": 3.0, "dent": 1.5}
-
 MAX_DAMAGE_IMAGES = 4
 VALID_SIDES = {"Front", "Rear", "Left", "Right"}
 
-
-# ==============================
-# ฟังก์ชันหลัก (ย้ายมาจากสคริปต์เดิม แทบไม่แก้ Logic)
-# ==============================
 def predict_single_image(image_array_path):
     img = load_img(image_array_path, target_size=(380, 380))
     img_array = img_to_array(img)
@@ -101,10 +74,8 @@ def predict_car_from_4_sides(image_paths_dict):
     final_class = class_names[final_idx]
     final_confidence = float(avg_probs[final_idx]) * 100
 
-    votes = Counter([r["class"] for r in per_side_results.values()])
-    top_vote_class, top_vote_count = votes.most_common(1)[0]
+    agreement, reliable = summarize_votes([r["class"] for r in per_side_results.values()])
 
-    # Top 3 สำหรับให้ผู้ใช้เลือกใน Dropdown เผื่อ AI ทายไม่ตรง
     top_3_idx = np.argsort(avg_probs)[-3:][::-1]
     top_3 = [{"class": class_names[i], "confidence": round(float(avg_probs[i]) * 100, 2)} for i in top_3_idx]
 
@@ -112,28 +83,10 @@ def predict_car_from_4_sides(image_paths_dict):
         "final_class": final_class,
         "final_confidence": round(final_confidence, 2),
         "per_side": per_side_results,
-        "agreement": f"{top_vote_count}/{len(image_paths_dict)} sides agree",
-        "reliable": top_vote_count >= (len(image_paths_dict) // 2 + 1),
+        "agreement": agreement,
+        "reliable": reliable,
         "top_3": top_3,
     }
-
-
-def get_base_price(car_class_name):
-    try:
-        idx = class_names.index(car_class_name)
-        return class_price[idx]
-    except ValueError:
-        return 0
-
-
-def get_area(box):
-    return (box[2] - box[0]) * (box[3] - box[1])
-
-
-def get_severity(dtype, real_percent):
-    threshold = SEVERITY_THRESHOLD_PERCENT.get(dtype, float("inf"))
-    return "major" if real_percent >= threshold else "minor"
-
 
 def analyze_damage(image_path, zoom_ratio, conf=0.3, iou=0.5):
     img = cv2.imread(image_path)
@@ -200,10 +153,6 @@ def save_upload_temp(upload_file_bytes, label="ไฟล์"):
         f.write(upload_file_bytes)
     return temp_path
 
-
-# ==============================
-# Endpoint 1: ระบุรุ่นรถจากรูป 4 มุม
-# ==============================
 @app.post("/identify-car")
 async def identify_car(
     front: UploadFile = File(...),
@@ -211,8 +160,6 @@ async def identify_car(
     left: UploadFile = File(...),
     right: UploadFile = File(...),
 ):
-    # ใช้ชื่อ Field ตายตัว (front/rear/left/right) แทน List เพราะ "4 มุม" คือ Role ที่ตายตัว
-    # ไม่ใช่จำนวนไม่แน่นอนแบบรูปรอย — การตั้งชื่อชัดเจนทำให้ผิดลำดับไม่ได้เลย
     temp_paths = {}
     try:
         for side_name, file in [("Front", front), ("Rear", rear), ("Left", left), ("Right", right)]:
@@ -225,15 +172,10 @@ async def identify_car(
 
         return result
     finally:
-        # ลบไฟล์ชั่วคราวทั้งหมดไม่ว่าจะสำเร็จหรือ error (finally รันเสมอ)
         for path in temp_paths.values():
             if os.path.exists(path):
                 os.remove(path)
 
-
-# ==============================
-# Endpoint 2: ตรวจรอย + คำนวณราคา
-# ==============================
 @app.post("/assess-damage")
 async def assess_damage(
     car_class: str = Form(...),
@@ -296,10 +238,6 @@ async def assess_damage(
         "drawn_images": drawn_images_response,
     }
 
-
-# ==============================
-# Health Check (จำเป็นสำหรับ Docker/CI-CD ภายหลัง)
-# ==============================
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
